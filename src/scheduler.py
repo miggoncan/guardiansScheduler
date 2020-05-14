@@ -1,6 +1,6 @@
 import sys
-import json
 import logging
+import logging.config
 import calendar as calendarLib
 
 try:
@@ -12,13 +12,7 @@ except ImportError:
 
 # If PRETTY_PRINT is True, the logged objects will be displayed in a 
 # more human readable f
-PRETTY_PRINT = True
-
-LOG_LEVEL = logging.INFO
-
-DOCTORS_FILE = 'doctors.json'
-SHIFT_CONF_FILE = 'shiftConfs.json'
-CALENDAR_FILE = 'calendar.json'
+PRETTY_PRINT = False
 
 # This dict will be used to convert from a day str to its int 
 # representation
@@ -40,13 +34,6 @@ DAY_NUM_TO_WEEK_DAY = {dayNum: weekdayName
 # These variables are used to identify the BoolVars used in the CpModel
 SHIFT = 's'
 CONSULT = 'c'
-
-
-# Configure the log for this module
-# Note no handler is added. If this is the main module, it will be 
-# configured in the main function
-log = logging.getLogger(__name__)
-log.setLevel(LOG_LEVEL)
 
 # f will be the function called on objects that are logged
 if PRETTY_PRINT:
@@ -198,6 +185,7 @@ def getShiftPreferences(*, shiftConfs, dayConfs, keys, daysOfMonth):
                 month, and the doctor with id 3 would like to have a 
                 shift the fourth day of the month
     '''
+    log = logging.getLogger('scheduler.getShiftPreferences')
     log.info('Requested the shift preferences: {}'.format(keys))
     key1 =  keys[0]
     key2 = keys[1]
@@ -278,17 +266,8 @@ def getShiftPreferences(*, shiftConfs, dayConfs, keys, daysOfMonth):
 
     return shiftPreferences
 
-def schedule():
-    # First, read the data from the files
-    with open(DOCTORS_FILE) as doctorsFile:
-        doctors = json.loads(doctorsFile.read())
-        log.debug('The doctors dict is: {}'.format(f(doctors)))
-    with open(SHIFT_CONF_FILE) as shiftConfsFile:
-        shiftConfs = json.loads(shiftConfsFile.read())
-        log.debug('The shiftConfs dict is: {}'.format(f(shiftConfs)))
-    with open(CALENDAR_FILE) as calendarFile:
-        calendarDict = json.loads(calendarFile.read())
-        log.debug('The calendar dict is: {}'.format(f(calendarDict)))
+def schedule(doctors, shiftConfs, calendarDict):
+    log = logging.getLogger('scheduler.schedule')
 
     year = calendarDict['year']
     month = calendarDict['month']
@@ -336,6 +315,8 @@ def schedule():
             daysOfMonth=daysOfMonth)
     log.info('Required shifts are: {}'.format(f(required)))
 
+    # TODO add doctors with Absences as unavailable
+
     model = cp_model.CpModel()
 
     '''shiftVars is a dictionary that will contain the BoolVars used in the 
@@ -368,12 +349,3 @@ def schedule():
                     )
                 shiftVars[docId, dayNum] = doctorVars
     log.debug('The shiftVars are: {}'.format(f(shiftVars)))
-
-def main():
-    logging.basicConfig(format='%(asctime)s [%(levelname)s] %(name)s in '
-        + '%(funcName)s\n\t%(message)s')
-    schedule()
-
-
-if __name__ == '__main__':
-    main()
