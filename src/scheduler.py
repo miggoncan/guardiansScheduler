@@ -324,9 +324,10 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
                     having as a value an str represeting a date in ISO 
                     format. The absence can be None.
 
-                status: an str that has to be diferent than DELETED for
-                    this doctor to be taken into account when 
-                    scheduling
+            NOTE: All doctors in this list will be assigned 
+            cycle-shifts and non-cycle-shifts (according to their 
+            preferences). If a doctor is DELETED, it should not be 
+            included in this list
 
         shiftConfs:
             List of dicts. Each dict represents the shift configuration
@@ -620,7 +621,6 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
         for dayConf in dayConfs:
             if dayConf['isWorkingDay']:
                 docId = shiftConf['doctorId']
-                # TODO if this doctor is not deleted
                 dayNum = dayConf['day']
                 doctorVars = []
                 doctorVars.append(
