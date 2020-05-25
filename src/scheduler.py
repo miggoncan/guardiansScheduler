@@ -441,6 +441,7 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
             'days': [
                 {
                     'day': 1, 
+                    'isWorkingDay': True,
                     'cycle': [
                         {'id': idDoctor1}
                         {'id': idDoctor2}, 
@@ -455,6 +456,7 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
                 },
                 {
                     'day': 2, 
+                    'isWorkingDay': True,
                     'cycle': [
                         {'id': idDoctor3}
                         {'id': idDoctor4}, 
@@ -758,6 +760,7 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
         'status': 'PENDING_CONFIRMATION',
         'days': [{
             'day': day.day, 
+            'isWorkingDay': False,
             'cycle': [], 
             'shifts': [], 
             'consultations':[]
@@ -780,6 +783,8 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
         for day in daysOfMonth:
             schedule['days'][day.day-1]['cycle'] = \
                 [{'id': docId} for docId in cycleShifts[day.day]]
+            if dayConfs[day.day-1]['isWorkingDay']:
+                schedule['days'][day.day-1]['isWorkingDay'] = True
     else:
         schedule['status'] = 'GENERATION_ERROR'
         schedule['days'] = []
