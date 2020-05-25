@@ -16,7 +16,7 @@
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
             "formatter": "precise",
-            "filename": "../log/scheduler.log",
+            "filename": "log/scheduler.log",
             "maxBytes": 1048576,
             "backupCount": 3
         }
@@ -31,7 +31,7 @@
             "handlers": ["console", "file"]
         },
         "scheduler.getShiftPreferences": {
-            "level": "INFO",
+            "level": "WARN",
             "handlers": ["console", "file"]
         }
     },

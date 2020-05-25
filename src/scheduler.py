@@ -1,7 +1,14 @@
+'''The scheduler module contains the function schedule used to solve the
+scheduling problem
+
+Author: miggoncan2
+'''
+
 import sys
 import logging
 import logging.config
 import calendar as calendarLib
+import datetime
 
 try:
     from ortools.sat.python import cp_model
@@ -9,10 +16,6 @@ except ImportError:
     print('ERROR: Could not find module ortools. Try \'pip install ortools\'')
     sys.exit(1)
 
-
-# If PRETTY_PRINT is True, the logged objects will be displayed in a 
-# more human readable f
-PRETTY_PRINT = False
 
 # This dict will be used to convert from a day str to its int 
 # representation
@@ -35,12 +38,16 @@ DAY_NUM_TO_WEEK_DAY = {dayNum: weekdayName
 SHIFT = 's'
 CONSULT = 'c'
 
-# f will be the function called on objects that are logged
-if PRETTY_PRINT:
-    from pprint import pformat
-    f = lambda obj: pformat(obj)
-else:
-    f = lambda obj: str(obj)
+# Default weights of the objective function
+# Do NOT change this values here. Instead, use the configuration dict
+# supplied to the schedule function.
+# This dict can be easily created from the config/scheduler.json file
+DEFAULT_CYCLE_SHIFT_RATE = 10
+DEFAULT_WANTED_SHIFT_WEIGHT = 3
+DEFAULT_UNWANTED_SHIFT_WEIGHT = 3
+DEFAULT_WANTED_CONSULTATION_WEIGHT = 3
+DEFAULT_ALL_SHIFT_WEIGHT = 1
+DEFAULT_CONSULTATION_WEIGHT = 1
 
 
 def getShiftPreferences(*, shiftConfs, dayConfs, keys, daysOfMonth):
@@ -48,6 +55,9 @@ def getShiftPreferences(*, shiftConfs, dayConfs, keys, daysOfMonth):
 
     Day shift preferences indicated by dayConfs have higher preference
     than the ones indicated by shiftConfs
+
+    If keys are not present in the shiftConfs or in dayConfs, a default
+    empty list will be used as their values
 
     Keyword Args:
         shiftConfs:
@@ -187,6 +197,7 @@ def getShiftPreferences(*, shiftConfs, dayConfs, keys, daysOfMonth):
     '''
     log = logging.getLogger('scheduler.getShiftPreferences')
     log.info('Requested the shift preferences: {}'.format(keys))
+
     key1 =  keys[0]
     key2 = keys[1]
 
@@ -204,19 +215,19 @@ def getShiftPreferences(*, shiftConfs, dayConfs, keys, daysOfMonth):
     shifts2ByWeekDay = [[] for i in range(7)]
     for shiftConf in shiftConfs:
         docId = shiftConf['doctorId']
-        for shift1ByWeekDay in shiftConf[key1]:
+        for shift1ByWeekDay in shiftConf.get(key1, []):
             weekday = WEEK_DAY[shift1ByWeekDay['shift']]
             shifts1ByWeekDay[weekday].append(docId)
-        for shift2ByWeekDay in shiftConf[key2]:
+        for shift2ByWeekDay in shiftConf.get(key2, []):
             weekday = WEEK_DAY[shift2ByWeekDay['shift']]
             shifts2ByWeekDay[weekday].append(docId)
-    log.debug(f'{key1} by week day: {f(shifts1ByWeekDay)}')
-    log.debug(f'{key2} by week day: {f(shifts2ByWeekDay)}')
+    log.debug('{} by week day: {}'.format(key1, shifts1ByWeekDay))
+    log.debug('{} by week day: {}'.format(key2, shifts2ByWeekDay))
     for i in range(7):
         intersection = set(shifts1ByWeekDay[i]) & set(shifts2ByWeekDay[i])
         if len(intersection) != 0:
             log.warn(('The doctors with id {} have selected the shifts on {} '
-                + 'as both a {} and {}').format(f(intersection), 
+                + 'as both a {} and {}').format(intersection, 
                 DAY_NUM_TO_WEEK_DAY[i], key1, key2))
 
     shiftPreferences = {}
@@ -228,12 +239,12 @@ def getShiftPreferences(*, shiftConfs, dayConfs, keys, daysOfMonth):
         log.debug('This day is {}'.format(DAY_NUM_TO_WEEK_DAY[weekday]))
 
         log.debug('Getting high priority shift preferences')
-        shifts1HighPriority = [doctor['id'] for doctor in dayConf[key1]]
-        shifts2HighPriority = [doctor['id'] for doctor in dayConf[key2]]
+        shifts1HighPriority = [doctor['id'] for doctor in dayConf.get(key1, [])]
+        shifts2HighPriority = [doctor['id'] for doctor in dayConf.get(key2, [])]
         log.debug('High priority {} are: {}'.format(key1, 
-            f(shifts1HighPriority)))
+            shifts1HighPriority))
         log.debug('High priority{} are: {}'.format(key2, 
-            f(shifts2HighPriority)))
+            shifts2HighPriority))
 
         intersection = set(shifts1HighPriority) & set(shifts2HighPriority)
         if (len(intersection) != 0):
@@ -247,36 +258,254 @@ def getShiftPreferences(*, shiftConfs, dayConfs, keys, daysOfMonth):
             if docId not in shifts2HighPriority]
         shifts2Filtered = [docId for docId in shifts2ByWeekDay[weekday]
             if docId not in shifts1HighPriority]
-        log.debug(f'{key1} after filtering is: {f(shifts1Filtered)}')
-        log.debug(f'{key2} after filtering is: {f(shifts2Filtered)}')
+        log.debug('{} after filtering is: {}'.format(key1, shifts1Filtered))
+        log.debug('{} after filtering is: {}'.format(key2, shifts2Filtered))
 
         log.debug('Combining filtered shift preferences with high priority '
             + 'ones')
         shifts1Combined = list(set(shifts1Filtered) | set(shifts1HighPriority))
         shifts2Combined = list(set(shifts2Filtered) | set(shifts2HighPriority))
-        log.debug(f'{key1} after combining is: {f(shifts1Combined)}')
-        log.debug(f'{key2} after combining is: {f(shifts2Combined)}')
+        log.debug('{} after combining is: {}'.format(key1, shifts1Combined))
+        log.debug('{} after combining is: {}'.format(key2, shifts2Combined))
 
         shiftPreferences[day.day] = [
             shifts1Combined,
             shifts2Combined
         ]
 
-    log.debug('The shift preferences are: {}'.format(f(shiftPreferences)))
+    log.info('The shift preferences are: {}'.format(shiftPreferences))
 
     return shiftPreferences
 
-def schedule(doctors, shiftConfs, calendarDict):
+def getConfiguration(confDict, key, default=None):
+    '''Extract a configuration parameter from the configuration dict
+
+    Params:
+        confDict: a dict with the following structure:
+            {
+                'key1': {
+                    'value': 'myvalue1'
+                },
+                'key2': {
+                    'value': 'myvalue2'
+                },
+                ...
+            }
+        key: an str. One of the keys of the confDict. In the example 
+            above, 'key1' or 'key2' would be valid values
+        default: the value to return if the key is not found. In case 
+            the key is not found, an ERROR message will be logged.
+            Defaults to None
+
+        Returns:
+            The value corresponding to the given key, or the provided 
+            default
+    '''
     log = logging.getLogger('scheduler.schedule')
+    value = confDict.get(key, {}).get('value', None)
+    if value is None:
+        log.error(f'The {key} is not correctly configured. '
+            + f'Using the default {default}')
+        value = default
+    return value
+
+def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
+    '''Returns the schedule shifts using the given information
+
+    Args:
+        doctors:
+            List of dicts. Each dict represents a doctor.
+
+            The doctor dict has to contain the keys:
+                id: An int represeting the id of a doctor. There must 
+                    not be two doctors with the same id.
+
+                absence: A dict with two keys 'start' and 'end', each
+                    having as a value an str represeting a date in ISO 
+                    format. The absence can be None.
+
+                status: an str that has to be diferent than DELETED for
+                    this doctor to be taken into account when 
+                    scheduling
+
+        shiftConfs:
+            List of dicts. Each dict represents the shift configuration
+            of a doctor.
+
+            Each shiftConf dict has to contains the keys:
+                doctorId: An int representing the id of a doctor. There
+                    must not be two shift configurations for the same
+                    doctor.
+
+                numConsultations: An int representing whether this 
+                    doctor does consultation shifts (> 0) or not (== 0)
+
+                doesCycleShifts: A bool representing whether this 
+                    doctor does cycle-shifts or not
+
+                hasShiftsOnlyWhenCycleShifts: A bool representing 
+                    wherther this doctor should only have 
+                    non-cycle-shifts whenever they have a cycle-shift.
+                    This property has a higher preference than 
+                    minShifts and maxShifts, meaning these last two 
+                    will be ignored if this property is true.
+
+                maxShifts: An int representing the maximum number of
+                    shifts this doctor can have.
+                    E.g. 4 -> The doctor must have 4 shifts or less
+
+                minShifts: An int representing the minimum number of 
+                    shifts this doctor can have. 
+                    E.g. 2 -> The doctor must have 2 or more shifts
+
+                unwantedShifts:
+                unavailableShifts:
+                wantedShifts:
+                mandatoryShifts:
+                    These four keys together are refered to as 'shift
+                    preferences'. Their values should be lists dicts.
+                    Each dict must have a key 'shift' having as a value
+                    an str. This str must be a day of a week
+                    E.g. mandatoryShifts: [
+                            {'shift': 'Thursday'},
+                            {'shift': 'Tuesday'}
+                         ]
+                wantedConsultations:
+                    Idem as shift preferences, but refer to 
+                    consultations.
+
+        calendarDict:
+            A dict with the following structure:
+                {
+                    'month': 6,
+                    'year': 2020,
+                    'dayConfigurations': [
+                        {
+                            'day': 1,
+                            'isWorkingDay': true,
+                            'numShifts': 2,
+                            'numConsultations': 0,
+                            'unwantedShifts': [
+                                {'id': idDoctor1}
+                                {'id': idDoctor2}, 
+                                ...
+                            ],
+                            'unavailableShifts': [],
+                            'wantedShifts': [
+                                {'id': idDoctor3}
+                                {'id': idDoctor4}, 
+                                ...
+                            ],
+                            'mandatoryShifts': [],
+                            'cycleChanges': []
+                        },
+                        {
+                            'day': 2,
+                            'isWorkingDay': true,
+                            'numShifts':2,
+                            'numConsultations': 0,
+                            'unwantedShifts': [],
+                            'unavailableShifts': [],
+                            'wantedShifts': [
+                                {'id': idDoctor1}
+                                {'id': idDoctor2}, 
+                                ...
+                            ],
+                            'mandatoryShifts': [
+                                {'id': idDoctor7}
+                                {'id': idDoctor8}, 
+                                ...
+                            ],
+                            'cycleChanges': [
+                                'cyleGiver': {'id': idDoctor1},
+                                'cycleReceiver': {'id': idDoctor2}
+                            ]
+                        },
+                        ...
+                    ]
+                }
+
+        schedulerConf:
+            See the documentation of the getConfiguration function
+
+    Returns:
+        A dict with the following structure (If there has been an error 
+        during the generation, STATUS will be GENERATION_ERROR, and 
+        days will be an empty list. Otherwise, STATUS will be 
+        PENDING_CONFIRMATION, and days will be a list of all days in 
+        the month):
+        {
+            'month': month,
+            'year': year,
+            'status': 'STATUS',
+            'days': [
+                {
+                    'day': 1, 
+                    'cycle': [
+                        {'id': idDoctor1}
+                        {'id': idDoctor2}, 
+                        ...
+                    ], 
+                    'shifts': [
+                        {'id': idDoctor1}
+                        {'id': idDoctor4}, 
+                        ...
+                    ],  
+                    'consultations':[]
+                },
+                {
+                    'day': 2, 
+                    'cycle': [
+                        {'id': idDoctor3}
+                        {'id': idDoctor4}, 
+                        ...
+                    ], 
+                    'shifts': [
+                        {'id': idDoctor4}
+                        {'id': idDoctor5}, 
+                        ...
+                    ],  
+                    'consultations':[
+                        {'id': idDoctor1} 
+                        ...
+                    ], 
+                },
+                ...
+            ]
+        }
+    '''
+    log = logging.getLogger('scheduler.schedule')
+    log.debug(('Request to schedule with doctors: {}, shiftConfs: {} '
+        + 'and calendarDict: {}').format(doctors, shiftConfs, calendarDict))
 
     year = calendarDict['year']
     month = calendarDict['month']
     log.info('Generating schedule for {}-{}'.format(year, month))
 
+    # Extract the configuration
+    cycleShiftRate = getConfiguration(schedulerConf, 'cycleShiftRate',
+        default=DEFAULT_CYCLE_SHIFT_RATE)
+    wantedShiftWeight = getConfiguration(schedulerConf, 'wantedShiftWeight',
+        default=DEFAULT_WANTED_SHIFT_WEIGHT)
+    unwantedShiftWeight = getConfiguration(schedulerConf, 'unwantedShiftWeight',
+        default=DEFAULT_UNWANTED_SHIFT_WEIGHT)
+    wantedConsultationWeight = getConfiguration(schedulerConf, 
+        'wantedConsultationWeight',default=DEFAULT_WANTED_CONSULTATION_WEIGHT)
+    allShiftWeight = getConfiguration(schedulerConf, 'allShiftWeight',
+        default=DEFAULT_ALL_SHIFT_WEIGHT)
+    consultationWeight = getConfiguration(schedulerConf, 'consultationWeight',
+        default=DEFAULT_CONSULTATION_WEIGHT)
+    log.debug(('The values extracted from the configuration are: '
+        + 'cycleShiftRate={}, wantedShiftWeight={}, unwantedShiftWeight={}, '
+        + 'wantedConsultationWeight={}, allShiftWeight={}, '
+        + 'consultationWeight={}').format(cycleShiftRate, wantedShiftWeight, 
+        unwantedShiftWeight, wantedConsultationWeight, allShiftWeight, 
+        consultationWeight))
+
     # The list of dayConfigurations sorted by day number
     dayConfs = sorted(calendarDict['dayConfigurations'], 
                         key=lambda day: day['day'])
-    log.debug('dayConfs after being sorted is {}'.format(f(dayConfs)))
+    log.debug('dayConfs after being sorted is {}'.format(dayConfs))
 
     # The calendar object will be used to iterate over the days of a month
     calendar = calendarLib.Calendar()
@@ -288,8 +517,9 @@ def schedule(doctors, shiftConfs, calendarDict):
     daysOfMonth = [day for day in calendar.itermonthdates(year, month) 
                     if day.month == month]
     numDaysInMonth = len(daysOfMonth)
-    log.debug('The days in this month are {}'.format(f(daysOfMonth)))
+    log.debug('The days in this month are {}'.format(daysOfMonth))
 
+    # Check all needed days are present
     if numDaysInMonth != len(dayConfs):
         errorMessage = ('The number of expected days for {}-{} is {}, but the '
             + 'number of days given was {}').format(year, month, 
@@ -297,7 +527,6 @@ def schedule(doctors, shiftConfs, calendarDict):
         log.error(errorMessage)
         log.error('Raising ValueError')
         raise ValueError(errorMessage)
-
     for day, dayConf in zip(daysOfMonth, dayConfs):
         if day.day != dayConf['day']:
             errorMessage = ('Missing the day {} in the day configurations of '
@@ -306,16 +535,67 @@ def schedule(doctors, shiftConfs, calendarDict):
             log.error('Raising ValueError')
             raise ValueError(errorMessage)
 
+    # TODO check that, with the given information, a schedule can be 
+    # generated. This is, for example, that the sum of the maxShifts of
+    # all doctors is greater than the sum of the number of shifts there
+    # has to be each day
+
+    # Extract shift preferences
     requests = getShiftPreferences(shiftConfs=shiftConfs, dayConfs=dayConfs, 
             keys=('wantedShifts', 'unwantedShifts'), daysOfMonth=daysOfMonth)
-    log.info('Requested shifts are: {}'.format(f(requests)))
-
+    log.debug('Requested shifts are: {}'.format(requests))
     required = getShiftPreferences(shiftConfs=shiftConfs, dayConfs=dayConfs, 
             keys=('mandatoryShifts', 'unavailableShifts'), 
             daysOfMonth=daysOfMonth)
-    log.info('Required shifts are: {}'.format(f(required)))
+    log.debug('Required shifts are: {}'.format(required))
+    requestConsultations = getShiftPreferences(shiftConfs=shiftConfs, 
+            dayConfs=dayConfs, 
+            keys=('wantedConsultations', 'unwantedConsultations'), 
+            daysOfMonth=daysOfMonth)
+    log.debug('Requested consultations are: {}'.format(requestConsultations))
+
+    # Generate a dict to relate a doctor's id with their shiftConf
+    shiftConfsDict = {shiftConf['doctorId']: shiftConf 
+        for shiftConf in shiftConfs}
+
+    # First, generate the cycle shifts
+    # TODO Cycle changes need to be taken into account
+    cycleShifts = {day.day: [] for day in daysOfMonth}
+    firstDayOfMonth = daysOfMonth[0]
+    for doctor in doctors:
+        docId = doctor['id']
+        shiftConf = shiftConfsDict.get(docId, None)
+        doesCycleShifts = False
+        if shiftConf is None:
+            log.warn(f'The doctor {docId} does not have a shift configuration'
+                + ' assuming the doctor does cycle shifts')
+            doesCycleShifts = True 
+        elif shiftConf['doesCycleShifts']:
+            doesCycleShifts = True
+        if doesCycleShifts:
+            startDate = datetime.date.fromisoformat(doctor['startDate'])
+            log.debug('The start date of the doctor {} is {}'
+                .format(docId, startDate))
+            difference = (firstDayOfMonth - startDate).days % cycleShiftRate
+            log.debug('The difference is: {}'.format(difference))
+            if difference == 0:
+                firstCycleShift = firstDayOfMonth
+                day = 0
+            else:
+                firstCycleShift = firstDayOfMonth \
+                    + datetime.timedelta(days=cycleShiftRate-difference)
+            log.debug('The first cycle shift of doctor {} is {}'
+                .format(docId, firstCycleShift))
+            # Index used to generate the cycle-shifts of this doctor
+            i = firstCycleShift.day
+            while i <= numDaysInMonth:
+                cycleShifts[i].append(docId)
+                i += cycleShiftRate
+    log.debug('The cycle shifts are: {}'.format(cycleShifts))
 
     # TODO add doctors with Absences as unavailable
+
+    workingDays = [dayConf['day'] for dayConf in dayConfs if dayConf['isWorkingDay']]
 
     model = cp_model.CpModel()
 
@@ -329,7 +609,7 @@ def schedule(doctors, shiftConfs, calendarDict):
         represents whether the doctor with id doctorId has a shift the day
         dayNumber
       - The second element is optinal. It will only be present if the doctor
-        doesConsultations. In that case, the element will be another BoolVar
+        does consultations. In that case, the element will be another BoolVar
         that will represent whether the doctor has consultations this 
         daynumber
     '''
@@ -338,14 +618,173 @@ def schedule(doctors, shiftConfs, calendarDict):
         for dayConf in dayConfs:
             if dayConf['isWorkingDay']:
                 docId = shiftConf['doctorId']
+                # TODO if this doctor is not deleted
                 dayNum = dayConf['day']
                 doctorVars = []
                 doctorVars.append(
                     model.NewBoolVar(f'shift_doc{docId}_day{dayNum}_{SHIFT}')
                 )
-                if shiftConf['doesConsultations']:
+                if shiftConf['numConsultations'] > 0:
                     doctorVars.append(
                         model.NewBoolVar(f'shift_doc{docId}_day{dayNum}_{CONSULT}')
                     )
                 shiftVars[docId, dayNum] = doctorVars
-    log.debug('The shiftVars are: {}'.format(f(shiftVars)))
+    log.debug('The shiftVars are: {}'.format(shiftVars))
+
+    for shiftVar in shiftVars.values():
+        log.debug(('A doctor cannot have a shift and a consultation the same '
+            + 'day. Adding the restriction sum({}) <= 1').format(shiftVar))
+        model.Add(sum(shiftVar) <= 1)
+
+    # If a doctor has a cycle-shift, they have to have a shift that day
+    for dayNum in workingDays:
+        for docId in cycleShifts[dayNum]:
+            log.debug('Analyzing the cycle-shifts of doctor {}'.format(docId))
+            shiftConf = shiftConfsDict.get(docId, None)
+            doesNonCycleShifts = True
+            if shiftConf is None:
+                log.warn(('The doctor {} does not have a shift configuration. '
+                    + 'Assuming they do NOT have non-cycle-shifts')
+                    .format(docId))
+                doesNonCycleShifts = False
+            elif shiftConf['maxShifts'] == 0 \
+                and not shiftConf['hasShiftsOnlyWhenCycleShifts']:
+                log.debug('The doctor {} does not have non-cycle-shifts'
+                    .format(docId))
+                doesNonCycleShifts = False
+            if doesNonCycleShifts:
+                log.debug(('The doctor {} has a cycle shift on day {} adding '
+                    + 'the restriction {} == 1').format(docId, dayNum, 
+                    shiftVars[docId, dayNum][0]))
+                model.Add(shiftVars[docId, dayNum][0] == 1)
+
+    # Each doctor has a maximum and a minimum number of shifts
+    for docId, shiftConf in shiftConfsDict.items():
+        if shiftConf['hasShiftsOnlyWhenCycleShifts']:
+            log.debug(('Doctor {} only has shifts when cycle-shifts, so no '
+                + 'need to add its maximum and minimum restrictions')
+            .format(docId))
+        else:
+            log.debug(('Creating maximum and minimum shift restrictions for '
+                + 'doctor {} with shiftConf {}').format(docId, shiftConf))
+
+            doctorShiftVars = [shiftVars[docId, dayNum][0] 
+                for dayNum in workingDays]
+            log.debug(('Minimum number of shifts: sum({}) >= {}')
+                .format(doctorShiftVars, shiftConf['minShifts']))
+            model.Add(sum(doctorShiftVars) >= shiftConf['minShifts'])
+
+            # The maximum number of shifts also includes consultations
+            allDoctorVars = [var for dayNum in workingDays 
+                for var in shiftVars[docId, dayNum]]
+            log.debug(('Maximum number of shifts: sum({}) <= {}')
+                .format(allDoctorVars, shiftConf['maxShifts']))
+            model.Add(sum(allDoctorVars) <= shiftConf['maxShifts'])
+
+            # If the doctor has consultations, restrict the number of 
+            # consultations it can have
+            if shiftConf['numConsultations'] > 0:
+                doctorConsultationVars = [shiftVars[docId, dayNum][1] 
+                    for dayNum in workingDays]
+                log.debug(('Minimum number of consultations: sum({}) >= {}')
+                    .format(doctorConsultationVars, 
+                        shiftConf['numConsultations']))
+                model.Add(sum(doctorConsultationVars) 
+                    <= shiftConf['numConsultations'])
+
+    # Each day there is a minimum number of shifts and consultations
+    for dayNum in workingDays:
+        dayShiftVars = [shiftVars[doctor['id'], dayNum][0] for doctor in doctors]
+        log.debug('Minimum number of shifts on day {}: sum({}) >= {}'
+            .format(dayNum, dayShiftVars, dayConfs[dayNum]['numShifts']))
+        model.Add(sum(dayShiftVars) >= dayConfs[dayNum]['numShifts'])
+
+        dayConsultationsVar = [shiftVars[doctor['id'], dayNum][1] 
+            for doctor in doctors 
+            if len(shiftVars[doctor['id'], dayNum]) > 1]
+        log.debug('Minimum number of consultations on day {}: sum({}) >= {}'
+            .format(dayNum, dayConsultationsVar, 
+                dayConfs[dayNum]['numConsultations']))
+        model.Add(sum(dayConsultationsVar) >= dayConfs[dayNum]['numConsultations'])
+
+    # Wanted shifts contribute positively to the objective function
+    wantedShiftContribution = \
+        sum(wantedShiftWeight * shiftVars[docId, dayNum][0] 
+            for dayNum in workingDays 
+            for docId in requests[dayNum][0])
+    # Unwanted shifts contribute negatively to the objective function
+    unwantedShiftContribution = \
+        - sum(unwantedShiftWeight * shiftVars[docId, dayNum][0] 
+            for dayNum in workingDays 
+            for docId in requests[dayNum][1])
+    # Wanted consultations contribute positively
+    wantedConsultationContribution = \
+        sum(wantedConsultationWeight * shiftVars[docId, dayNum][1]
+            for dayNum in workingDays 
+            for docId in requestConsultations[dayNum][0])
+    # All shifts contribute negatively (to minimize the number of 
+    # shifts scheduled)
+    allShiftContribution = - sum(allShiftWeight * shiftVar[0] 
+                                for shiftVar in shiftVars.values())
+    # Consultations contribute positively (to give preference to a 
+    # consultation over a regular shift)
+    consultationContribution = sum(consultationWeight * shiftVar[1] 
+                                    for shiftVar in shiftVars.values() 
+                                        if len(shiftVar) > 1)
+
+    objectiveFunction = wantedShiftContribution + unwantedShiftContribution \
+        + wantedConsultationContribution + allShiftContribution \
+        + consultationContribution
+
+    model.Maximize(objectiveFunction)
+
+
+    # Solve the problem
+    solver = cp_model.CpSolver()
+    solver.parameters.num_search_workers = 8
+    log.info('Starting the solver')
+    status = solver.Solve(model)
+    optimalOrFeasibleSolutionFound = status == cp_model.OPTIMAL \
+        or status == cp_model.FEASIBLE
+    if optimalOrFeasibleSolutionFound:
+        log.info('The solution found is optimal or feasible')
+    else:
+        log.error('No solution found')
+
+    # This is the schedule that is going to be returned
+    schedule = {
+        'month': month,
+        'year': year,
+        'status': 'PENDING_CONFIRMATION',
+        'days': [{
+            'day': day.day, 
+            'cycle': [], 
+            'shifts': [], 
+            'consultations':[]
+        } for day in daysOfMonth]
+    }
+    log.debug('The empty schedule to be filled is: {}'.format(schedule))
+
+    # If the optimal solution was found
+    if optimalOrFeasibleSolutionFound:
+        log.debug('Assigned shifts are: ')
+        for (docId, dayNum), shiftVar in shiftVars.items():
+            if solver.BooleanValue(shiftVar[0]):
+                log.debug('Doctor {} has a shift on day {}'
+                    .format(docId, dayNum))
+                schedule['days'][dayNum-1]['shifts'].append({'id':docId})
+            if len(shiftVar) > 1 and solver.BooleanValue(shiftVar[1]):
+                log.debug('Doctor {} has a consultation on day {}'
+                    .format(docId, dayNum))
+                schedule['days'][dayNum-1]['consultations'].append({'id':docId})
+        for day in daysOfMonth:
+            schedule['days'][day.day-1]['cycle'] = \
+                [{'id': docId} for docId in cycleShifts[day.day]]
+    else:
+        schedule['status'] = 'GENERATION_ERROR'
+        schedule['days'] = []
+    log.debug(solver.ResponseStats())
+
+    log.debug('The generated schedule is: {}'.format(schedule))
+
+    return schedule
