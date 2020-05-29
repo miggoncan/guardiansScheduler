@@ -94,8 +94,13 @@ def main():
         log.debug('The calendar dict is: {}'.format(calendarDict))
 
     log.info('Generating the schedule')
-    schedule = scheduler.schedule(doctors, shiftConfs, calendarDict, 
-        schedulerConf)
+    try:
+        schedule = scheduler.schedule(doctors, shiftConfs, calendarDict, 
+            schedulerConf)
+    except Exception as e:
+        log.error('An unexpected exception occurred: {}'.format(repr(e)))
+        raise e
+    
     log.debug('The generated schedule is: {}'.format(schedule))
 
     log.debug('Attemting to store the resulting schedule at: {}'

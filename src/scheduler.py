@@ -560,6 +560,7 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
     # Generate a dict to relate a doctor's id with their shiftConf
     shiftConfsDict = {shiftConf['doctorId']: shiftConf 
         for shiftConf in shiftConfs}
+    log.debug('The shift configuration dict is: {}'.format(shiftConfs))
 
     # First, generate the cycle shifts
     # TODO Cycle changes need to be taken into account
@@ -599,9 +600,11 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
     # TODO add doctors with Absences as unavailable
 
     workingDays = [dayConf['day'] for dayConf in dayConfs if dayConf['isWorkingDay']]
+    log.debug('The working days of the month are: {}'.format(workingDays))
 
     model = cp_model.CpModel()
 
+    log.debug('Starting the generation of the boolean variables')
     '''shiftVars is a dictionary that will contain the BoolVars used in the 
     model.
 
@@ -619,7 +622,12 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
     shiftVars = {}
     for shiftConf in shiftConfs:
         for dayConf in dayConfs:
-            if dayConf['isWorkingDay']:
+            log.debug(('Generating the boolean variables for shiftConfig: '
+                + '{} and dayConfig: {}').format(shiftConf, dayConf))
+            if not dayConf['isWorkingDay']:
+                log.debug('The day is not a working day. Skipping it')
+            else:
+                log.debug('The day is a working day')
                 docId = shiftConf['doctorId']
                 dayNum = dayConf['day']
                 doctorVars = []
@@ -639,6 +647,7 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
         model.Add(sum(shiftVar) <= 1)
 
     # If a doctor has a cycle-shift, they have to have a shift that day
+    log.debug('Starting the generation of the cycle-shift restrictions')
     for dayNum in workingDays:
         for docId in cycleShifts[dayNum]:
             log.debug('Analyzing the cycle-shifts of doctor {}'.format(docId))
@@ -661,6 +670,8 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
                 model.Add(shiftVars[docId, dayNum][0] == 1)
 
     # Each doctor has a maximum and a minimum number of shifts
+    log.debug('Starting the generation of maximum and minimum number of '
+        + 'shifts per doctor')
     for docId, shiftConf in shiftConfsDict.items():
         if shiftConf['hasShiftsOnlyWhenCycleShifts']:
             log.debug(('Doctor {} only has shifts when cycle-shifts, so no '
@@ -695,20 +706,23 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
                     <= shiftConf['numConsultations'])
 
     # Each day there is a minimum number of shifts and consultations
+    log.debug('Starting the generation of maximum and minimum number of '
+        + 'shifts per day')
     for dayNum in workingDays:
-        dayShiftVars = [shiftVars[doctor['id'], dayNum][0] for doctor in doctors]
+        dayShiftVars = [shiftVars[docId, dayNum][0] for docId in shiftConfsDict]
         log.debug('Minimum number of shifts on day {}: sum({}) >= {}'
             .format(dayNum, dayShiftVars, dayConfs[dayNum]['numShifts']))
         model.Add(sum(dayShiftVars) >= dayConfs[dayNum]['numShifts'])
 
-        dayConsultationsVar = [shiftVars[doctor['id'], dayNum][1] 
-            for doctor in doctors 
-            if len(shiftVars[doctor['id'], dayNum]) > 1]
+        dayConsultationsVar = [shiftVars[docId, dayNum][1] 
+            for docId in shiftConfsDict 
+            if len(shiftVars[docId, dayNum]) > 1]
         log.debug('Minimum number of consultations on day {}: sum({}) >= {}'
             .format(dayNum, dayConsultationsVar, 
                 dayConfs[dayNum]['numConsultations']))
         model.Add(sum(dayConsultationsVar) >= dayConfs[dayNum]['numConsultations'])
 
+    log.debug('Starting the construction of the objective function')
     # Wanted shifts contribute positively to the objective function
     wantedShiftContribution = \
         sum(wantedShiftWeight * shiftVars[docId, dayNum][0] 
