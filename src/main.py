@@ -24,6 +24,7 @@ Author: miggoncan
 '''
 import json
 import sys
+import traceback
 from pathlib import Path
 import logging
 import logging.config
@@ -98,7 +99,7 @@ def main():
         schedule = scheduler.schedule(doctors, shiftConfs, calendarDict, 
             schedulerConf)
     except Exception as e:
-        log.error('An unexpected exception occurred: {}'.format(repr(e)))
+        log.error('An unexpected exception occurred: {}'.format(traceback.format_exc()))
         raise e
     
     log.debug('The generated schedule is: {}'.format(schedule))

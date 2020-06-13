@@ -711,16 +711,16 @@ def schedule(doctors, shiftConfs, calendarDict, schedulerConf):
     for dayNum in workingDays:
         dayShiftVars = [shiftVars[docId, dayNum][0] for docId in shiftConfsDict]
         log.debug('Minimum number of shifts on day {}: sum({}) >= {}'
-            .format(dayNum, dayShiftVars, dayConfs[dayNum]['numShifts']))
-        model.Add(sum(dayShiftVars) >= dayConfs[dayNum]['numShifts'])
+            .format(dayNum, dayShiftVars, dayConfs[dayNum-1]['numShifts']))
+        model.Add(sum(dayShiftVars) >= dayConfs[dayNum-1]['numShifts'])
 
         dayConsultationsVar = [shiftVars[docId, dayNum][1] 
             for docId in shiftConfsDict 
             if len(shiftVars[docId, dayNum]) > 1]
         log.debug('Minimum number of consultations on day {}: sum({}) >= {}'
             .format(dayNum, dayConsultationsVar, 
-                dayConfs[dayNum]['numConsultations']))
-        model.Add(sum(dayConsultationsVar) >= dayConfs[dayNum]['numConsultations'])
+                dayConfs[dayNum-1]['numConsultations']))
+        model.Add(sum(dayConsultationsVar) >= dayConfs[dayNum-1]['numConsultations'])
 
     log.debug('Starting the construction of the objective function')
     # Wanted shifts contribute positively to the objective function
