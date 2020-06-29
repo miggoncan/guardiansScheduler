@@ -20,6 +20,12 @@ This program needs 4 positional command line arguments. Them being
         python3.7 src/main.py doctors.json shiftConf.json \
             calendar.json schedule.json
 
+It also takes one optional argument:
+    --configDir=<pathToConfigDir>
+        This argument indicates the path to the configuration directory.
+        If it is not provided, the DEFAULT_CONFIG_DIR will be used
+        E.g. --configDir=/etc/scheduler/
+
 Author: miggoncan
 '''
 import json
@@ -35,22 +41,39 @@ import scheduler
 # The first parent refest to the src dir
 SCHEDULER_DIR = Path(__file__).resolve().parent.parent
 
-LOGGING_CONFIG_FILE = SCHEDULER_DIR / 'config/logging.json'
-SCHEDULER_CONFIG_FILE = SCHEDULER_DIR / 'config/scheduler.json'
+LOGGING_CONFIG_FILE_NAME = 'logging.json'
+SCHEDULER_CONFIG_FILE_NAME = 'scheduler.json'
+
+DEFAULT_CONFIG_DIR = SCHEDULER_DIR / 'config'
+
+# This argument indicates the path to the configuration directory
+# E.g. --configDir=/etc/scheduler/
+CONFIG_DIR_ARG = '--configDir='
 
 
 def main():
+    # Check for the CONFIG_DIR_ARG and extract the positional arguments
+    configDir = DEFAULT_CONFIG_DIR
+    positionalArgs = []
+    for arg in sys.argv[1:]:
+        if arg.startswith(CONFIG_DIR_ARG):
+            configDir = Path(arg.replace(CONFIG_DIR_ARG, ''))
+        else:
+            positionalArgs.append(arg)
+    loggingConfigPath = configDir / LOGGING_CONFIG_FILE_NAME
+    schedulerConfigPath = configDir / SCHEDULER_CONFIG_FILE_NAME
+
     # First, load the logging configuration
-    with LOGGING_CONFIG_FILE.open() as loggingConfFile:
+    with loggingConfigPath.open() as loggingConfFile:
         loggingConf = json.loads(loggingConfFile.read())
     # Change the filename of the file handler to be relative to the
-    # scheduler dir
+    # scheduler dir (only if the path is not absolute)
     handlers = loggingConf.get('handlers', None)
     if handlers:
         file = handlers.get('file', None)
         if file:
             filename = file.get('filename', None)
-            if filename:
+            if filename and not filename.startswith('/'):
                 file['filename'] = SCHEDULER_DIR / filename
     logging.config.dictConfig(loggingConf)
 
@@ -58,7 +81,7 @@ def main():
     log.info('Starting main program')
 
     # Extract the needed arguments
-    if len(sys.argv) != 5:
+    if len(positionalArgs) != 4:
         # To know the format of these files, see the scheduler.schedule
         # function. As the arguments passed to it will be dict directly 
         # generated from the given given json files
@@ -71,13 +94,13 @@ def main():
             + 'process must have permissions to write to it')
         log.error(f'Provided args are: {sys.argv}')
         sys.exit(1)
-    doctorsFilePath = sys.argv[1]
-    shiftConfsFilePath = sys.argv[2]
-    calendarFilePath = sys.argv[3]
-    scheduleFilePath = sys.argv[4]
+    doctorsFilePath = positionalArgs[0]
+    shiftConfsFilePath = positionalArgs[1]
+    calendarFilePath = positionalArgs[2]
+    scheduleFilePath = positionalArgs[3]
 
     # Read the scheduler configuration
-    with SCHEDULER_CONFIG_FILE.open() as schedulerConfFile:
+    with schedulerConfigPath.open() as schedulerConfFile:
         schedulerConf = json.loads(schedulerConfFile.read())
 
     # First, read the data from the files
